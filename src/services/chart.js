@@ -237,3 +237,199 @@ export function buildWeatherChartSvg(data) {
 
   return body.select("svg").node().outerHTML;
 }
+
+// --- Year heatmap: one row per day (Jan–Dec), 24 cols per row (one per hour), noon centred ---
+const CELL_SIZE = 8;
+const HEATMAP_MARGIN = { top: 44, right: 20, bottom: 32, left: 20 };
+
+/**
+ * Default temperature colour scale matching the standard key: -40°C to 50°C.
+ * Dark purple/indigo (cold) → blue → cyan → green → yellow → orange → red → dark red/black (hot).
+ */
+const TEMP_SCALE_DOMAIN = [
+  -40, -35, -30, -25, -20, -15, -10, -5, 0, 5, 10, 15, 20, 25, 28, 30, 32, 35, 40, 45, 50,
+];
+const TEMP_SCALE_RANGE = [
+  "#1a0a2e", "#2d1b4e", "#3d2b5c", "#1e3a5f", "#1a5276", "#2874a6", "#2980b9", "#5dade2",
+  "#48c9b0", "#1abc9c", "#27ae60", "#58d68d", "#d4e157", "#f4d03f", "#f5b041", "#e67e22",
+  "#e74c3c", "#c0392b", "#922b21", "#641e16", "#2e0f0f",
+];
+
+function defaultTempColorScale() {
+  const scale = d3
+    .scaleLinear()
+    .domain(TEMP_SCALE_DOMAIN)
+    .range(TEMP_SCALE_RANGE)
+    .clamp(true);
+  return (temp) => {
+    if (temp == null || Number.isNaN(temp)) return "#2d2d2d";
+    return scale(temp);
+  };
+}
+
+/**
+ * Build a year heatmap SVG from Open-Meteo hourly data for a full year.
+ * - One row = one day (Jan 1 top → Dec 31 bottom).
+ * - One column = one hour; noon (12) is in the centre (columns ordered 0..23).
+ * - Each cell colour = temperature (default blue–red scale).
+ * @param {Object} data - Open-Meteo archive response with hourly.time and hourly.temperature_2m
+ * @param {Object} [options] - { locationName, year, cellSize (px per square), cellBorderColor (hex, default #aaaaaa), colorScale (function temp => hex) }
+ * @returns {string} SVG markup
+ */
+export function buildYearHeatmapSvg(data, options = {}) {
+  const hourly = data.hourly;
+  if (!hourly?.time?.length || !hourly?.temperature_2m) {
+    throw new Error("Year heatmap requires hourly time and temperature_2m");
+  }
+
+  const cellSize = options.cellSize ?? CELL_SIZE;
+  const cellBorderColor = options.cellBorderColor ?? "#aaaaaa";
+  const time = hourly.time;
+  const temp = hourly.temperature_2m;
+  const locationName = options.locationName ?? data.locationName ?? data.timezone ?? "Unknown";
+  const year = options.year ?? new Date().getFullYear();
+
+  // Hour order: noon in centre → columns 0..23 = hours 0..23 (midnight at left, noon at column 12)
+  const hourToCol = (hour) => Math.min(23, Math.max(0, hour));
+
+  // Build sorted list of dates (YYYY-MM-DD) for the year
+  const dateSet = new Set();
+  for (let i = 0; i < time.length; i++) {
+    dateSet.add(time[i].slice(0, 10));
+  }
+  const sortedDates = Array.from(dateSet).sort();
+  const dateToRow = new Map(sortedDates.map((d, i) => [d, i]));
+  const numRows = sortedDates.length;
+  const numCols = 24;
+
+  // grid[row][col] = temperature (null if missing)
+  const grid = Array.from({ length: numRows }, () => Array(numCols).fill(null));
+  let minT = Infinity;
+  let maxT = -Infinity;
+
+  for (let i = 0; i < time.length; i++) {
+    const iso = time[i]; // "2024-07-15T14:00"
+    const dateStr = iso.slice(0, 10);
+    const hour = parseInt(iso.slice(11, 13), 10);
+    const row = dateToRow.get(dateStr);
+    if (row == null) continue;
+    const col = hourToCol(hour);
+    const t = temp[i];
+    if (t != null && !Number.isNaN(t)) {
+      grid[row][col] = t;
+      minT = Math.min(minT, t);
+      maxT = Math.max(maxT, t);
+    }
+  }
+
+  if (minT === Infinity) minT = 0;
+  if (maxT === -Infinity) maxT = 20;
+
+  const getColor = options.colorScale ?? defaultTempColorScale();
+
+  const width = numCols * cellSize + HEATMAP_MARGIN.left + HEATMAP_MARGIN.right;
+  const height = numRows * cellSize + HEATMAP_MARGIN.top + HEATMAP_MARGIN.bottom;
+
+  const dom = new JSDOM("<!DOCTYPE html><body></body>", { pretendToBeVisual: true });
+  const document = dom.window.document;
+  const body = d3.select(document.body);
+
+  const svg = body
+    .append("svg")
+    .attr("xmlns", "http://www.w3.org/2000/svg")
+    .attr("width", width)
+    .attr("height", height)
+    .attr("viewBox", `0 0 ${width} ${height}`);
+
+  svg.append("rect").attr("width", width).attr("height", height).attr("fill", "#1a1a2e");
+
+  const g = svg
+    .append("g")
+    .attr("transform", `translate(${HEATMAP_MARGIN.left},${HEATMAP_MARGIN.top})`);
+
+  // Title
+  g.append("text")
+    .attr("x", (numCols * cellSize) / 2)
+    .attr("y", -22)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#eee")
+    .attr("font-size", "16px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(`Hourly temperature — ${locationName} — ${year}`);
+
+  g.append("text")
+    .attr("x", (numCols * cellSize) / 2)
+    .attr("y", -6)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#888")
+    .attr("font-size", "11px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text("Midnight ← hours → Noon (centre) → 11pm");
+
+  // Cells (1px border around each square for clarity)
+  for (let row = 0; row < numRows; row++) {
+    for (let col = 0; col < numCols; col++) {
+      const t = grid[row][col];
+      g.append("rect")
+        .attr("x", col * cellSize)
+        .attr("y", row * cellSize)
+        .attr("width", cellSize)
+        .attr("height", cellSize)
+        .attr("fill", getColor(t))
+        .attr("stroke", cellBorderColor)
+        .attr("stroke-width", 1);
+    }
+  }
+
+  // Colour scale legend (horizontal bar below grid)
+  const legendWidth = numCols * cellSize;
+  const legendHeight = 14;
+  const legendY = numRows * cellSize + 8;
+
+  const legendN = 100;
+  const defs = svg.append("defs");
+  const gradientId = "year-heatmap-gradient";
+  const gradient = defs
+    .append("linearGradient")
+    .attr("id", gradientId)
+    .attr("x1", "0%")
+    .attr("x2", "100%")
+    .attr("y1", "0")
+    .attr("y2", "0");
+  const legendMin = -40;
+  const legendMax = 50;
+  for (let i = 0; i <= legendN; i++) {
+    const v = legendMin + (i / legendN) * (legendMax - legendMin);
+    gradient
+      .append("stop")
+      .attr("offset", `${(i / legendN) * 100}%`)
+      .attr("stop-color", getColor(v));
+  }
+
+  g.append("rect")
+    .attr("x", 0)
+    .attr("y", legendY)
+    .attr("width", legendWidth)
+    .attr("height", legendHeight)
+    .attr("fill", `url(#${gradientId})`)
+    .attr("rx", 2);
+
+  g.append("text")
+    .attr("x", 0)
+    .attr("y", legendY + legendHeight + 12)
+    .attr("fill", "#888")
+    .attr("font-size", "10px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(`${legendMin}°C`);
+
+  g.append("text")
+    .attr("x", legendWidth)
+    .attr("y", legendY + legendHeight + 12)
+    .attr("text-anchor", "end")
+    .attr("fill", "#888")
+    .attr("font-size", "10px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(`${legendMax}°C`);
+
+  return body.select("svg").node().outerHTML;
+}
