@@ -238,6 +238,167 @@ export function buildWeatherChartSvg(data) {
   return body.select("svg").node().outerHTML;
 }
 
+/**
+ * Build SVG chart showing daily rainfall amounts.
+ * @param {Object} data - Response from getHistoricalWeather / getWeatherByCity (includes locationName if by city)
+ * @returns {string} SVG markup
+ */
+export function buildRainfallChartSvg(data) {
+  const dom = new JSDOM("<!DOCTYPE html><body></body>", {
+    pretendToBeVisual: true,
+  });
+  const document = dom.window.document;
+
+  const daily = aggregateHourlyToDaily(data);
+  if (daily.length === 0) {
+    throw new Error("No hourly data in response");
+  }
+
+  const locationName = data.locationName || data.timezone || "Unknown";
+  const startDate = daily[0].date;
+  const endDate = daily[daily.length - 1].date;
+  const title = `Daily Rainfall — ${locationName}`;
+  const subtitle = `${startDate} to ${endDate}`;
+
+  const chartWidth = WIDTH - MARGIN.left - MARGIN.right;
+  const chartHeight = HEIGHT - MARGIN.top - MARGIN.bottom;
+
+  const xScale = d3
+    .scaleBand()
+    .domain(daily.map((d) => d.date))
+    .range([0, chartWidth])
+    .padding(0.3);
+
+  // Calculate rainfall extent for Y axis
+  const rainfalls = daily.map((d) => d.precipitationSum).filter((v) => v != null && v >= 0);
+  const rainfallMax = rainfalls.length ? Math.max(1, ...rainfalls) : 10; // At least 1mm for scale
+  const yRainfall = d3
+    .scaleLinear()
+    .domain([0, rainfallMax * 1.1]) // Add 10% padding at top
+    .range([chartHeight, 0]);
+
+  // Color scale: light blue (low) to dark blue (high rainfall)
+  const rainfallColorScale = d3
+    .scaleSequential(d3.interpolateBlues)
+    .domain([0, rainfallMax]);
+
+  const body = d3.select(document.body);
+  const svg = body
+    .append("svg")
+    .attr("xmlns", "http://www.w3.org/2000/svg")
+    .attr("width", WIDTH)
+    .attr("height", HEIGHT)
+    .attr("viewBox", `0 0 ${WIDTH} ${HEIGHT}`);
+
+  svg
+    .append("rect")
+    .attr("width", WIDTH)
+    .attr("height", HEIGHT)
+    .attr("fill", "#1a1a2e");
+
+  const g = svg
+    .append("g")
+    .attr("transform", `translate(${MARGIN.left},${MARGIN.top})`);
+
+  // Title & subtitle
+  g.append("text")
+    .attr("x", chartWidth / 2)
+    .attr("y", -28)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#eee")
+    .attr("font-size", "18px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(title);
+  g.append("text")
+    .attr("x", chartWidth / 2)
+    .attr("y", -10)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#aaa")
+    .attr("font-size", "13px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(subtitle);
+
+  // Daily rainfall bars
+  daily.forEach((d) => {
+    const x = xScale(d.date) ?? 0;
+    const rainfall = d.precipitationSum ?? 0;
+    const barHeight = chartHeight - yRainfall(rainfall);
+    const barWidth = xScale.bandwidth();
+
+    if (rainfall > 0) {
+      g.append("rect")
+        .attr("x", x)
+        .attr("y", yRainfall(rainfall))
+        .attr("width", barWidth)
+        .attr("height", barHeight)
+        .attr("fill", rainfallColorScale(rainfall))
+        .attr("rx", 3)
+        .append("title")
+        .text(`${d.date}: ${rainfall.toFixed(1)} mm`);
+    } else {
+      // Show a very thin bar or no bar for zero rainfall
+      g.append("rect")
+        .attr("x", x)
+        .attr("y", chartHeight - 1)
+        .attr("width", barWidth)
+        .attr("height", 1)
+        .attr("fill", "#444")
+        .append("title")
+        .text(`${d.date}: 0 mm`);
+    }
+  });
+
+  // X axis (dates, shortened)
+  const xAxis = g
+    .append("g")
+    .attr("transform", `translate(0,${chartHeight})`)
+    .call(
+      d3.axisBottom(xScale).tickFormat((d) => {
+        const [y, m, day] = d.split("-");
+        return `${m}/${day}`;
+      })
+    );
+  xAxis.selectAll("text").attr("fill", "#aaa").attr("font-size", "11px").attr("font-family", "system-ui, sans-serif");
+  xAxis.selectAll(".domain, .tick line").attr("stroke", "#444");
+
+  // Left Y axis: rainfall (mm)
+  const yAxisLeft = g.append("g").call(d3.axisLeft(yRainfall).ticks(6));
+  yAxisLeft.selectAll("text").attr("fill", "#aaa").attr("font-size", "11px").attr("font-family", "system-ui, sans-serif");
+  yAxisLeft.selectAll(".domain, .tick line").attr("stroke", "#444");
+
+  // Y axis label
+  g.append("text")
+    .attr("transform", "rotate(-90)")
+    .attr("y", -40)
+    .attr("x", -chartHeight / 2)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#aaa")
+    .attr("font-size", "12px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text("Rainfall (mm)");
+
+  // Legend
+  const legend = g.append("g").attr("transform", `translate(0,${chartHeight + 38})`);
+  legend
+    .append("rect")
+    .attr("x", 0)
+    .attr("y", 0)
+    .attr("width", 12)
+    .attr("height", 12)
+    .attr("fill", rainfallColorScale(0))
+    .attr("rx", 2);
+  legend
+    .append("text")
+    .attr("x", 18)
+    .attr("y", 10)
+    .attr("fill", "#aaa")
+    .attr("font-size", "11px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text("Daily rainfall (mm)");
+
+  return body.select("svg").node().outerHTML;
+}
+
 // --- Year heatmap: one row per day (Jan–Dec), 24 cols per row (one per hour), noon centred ---
 const CELL_SIZE = 8;
 const HEATMAP_MARGIN = { top: 44, right: 20, bottom: 32, left: 20 };
@@ -273,7 +434,7 @@ function defaultTempColorScale() {
  * - One column = one hour; noon (12) is in the centre (columns ordered 0..23).
  * - Each cell colour = temperature (default blue–red scale).
  * @param {Object} data - Open-Meteo archive response with hourly.time and hourly.temperature_2m
- * @param {Object} [options] - { locationName, year, cellSize (px per square), cellBorderColor (hex, default #aaaaaa), colorScale (function temp => hex) }
+ * @param {Object} [options] - { locationName, year, cellSize (px per square), cellBorderColor (hex, default #aaaaaa), showTooltips (boolean, default true), colorScale (function temp => hex) }
  * @returns {string} SVG markup
  */
 export function buildYearHeatmapSvg(data, options = {}) {
@@ -284,6 +445,7 @@ export function buildYearHeatmapSvg(data, options = {}) {
 
   const cellSize = options.cellSize ?? CELL_SIZE;
   const cellBorderColor = options.cellBorderColor ?? "#aaaaaa";
+  const showTooltips = options.showTooltips ?? true;
   const time = hourly.time;
   const temp = hourly.temperature_2m;
   const locationName = options.locationName ?? data.locationName ?? data.timezone ?? "Unknown";
@@ -302,7 +464,7 @@ export function buildYearHeatmapSvg(data, options = {}) {
   const numRows = sortedDates.length;
   const numCols = 24;
 
-  // grid[row][col] = temperature (null if missing)
+  // grid[row][col] = { temp, date, hour } or null if missing
   const grid = Array.from({ length: numRows }, () => Array(numCols).fill(null));
   let minT = Infinity;
   let maxT = -Infinity;
@@ -316,7 +478,7 @@ export function buildYearHeatmapSvg(data, options = {}) {
     const col = hourToCol(hour);
     const t = temp[i];
     if (t != null && !Number.isNaN(t)) {
-      grid[row][col] = t;
+      grid[row][col] = { temp: t, date: dateStr, hour };
       minT = Math.min(minT, t);
       maxT = Math.max(maxT, t);
     }
@@ -366,11 +528,15 @@ export function buildYearHeatmapSvg(data, options = {}) {
     .attr("font-family", "system-ui, sans-serif")
     .text("Midnight ← hours → Noon (centre) → 11pm");
 
-  // Cells (1px border around each square for clarity)
+  // Cells (1px border around each square for clarity, with hover tooltips)
   for (let row = 0; row < numRows; row++) {
     for (let col = 0; col < numCols; col++) {
-      const t = grid[row][col];
-      g.append("rect")
+      const cell = grid[row][col];
+      const t = cell?.temp ?? null;
+      const date = cell?.date ?? sortedDates[row];
+      const hour = cell?.hour ?? col;
+      
+      const rect = g.append("rect")
         .attr("x", col * cellSize)
         .attr("y", row * cellSize)
         .attr("width", cellSize)
@@ -378,6 +544,22 @@ export function buildYearHeatmapSvg(data, options = {}) {
         .attr("fill", getColor(t))
         .attr("stroke", cellBorderColor)
         .attr("stroke-width", 1);
+      
+      // Tooltip on hover (shows in browser when viewing SVG) - optional
+      if (showTooltips) {
+        if (cell) {
+          const hourLabel = `${hour.toString().padStart(2, "0")}:00`;
+          const dateFormatted = new Date(date + "T00:00:00").toLocaleDateString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+          });
+          const tempLabel = t != null ? `${t.toFixed(1)}°C` : "N/A";
+          rect.append("title").text(`${dateFormatted} ${hourLabel} — ${tempLabel}`);
+        } else {
+          rect.append("title").text(`${date} ${hour.toString().padStart(2, "0")}:00 — No data`);
+        }
+      }
     }
   }
 
@@ -430,6 +612,222 @@ export function buildYearHeatmapSvg(data, options = {}) {
     .attr("font-size", "10px")
     .attr("font-family", "system-ui, sans-serif")
     .text(`${legendMax}°C`);
+
+  return body.select("svg").node().outerHTML;
+}
+
+// --- Rainfall year heatmap: same layout as temperature (1 row/day, 24 cols/hour, noon centred), fixed scale for comparison ---
+/**
+ * Fixed rainfall colour scale: 0 mm = white, 50 mm = very dark blue.
+ * Discrete scale with 11 shades of blue, similar to temperature scale. Same key for every image.
+ */
+const RAINFALL_SCALE_DOMAIN = [0, 0.5, 1, 2, 5, 10, 15, 20, 30, 40, 50];
+const RAINFALL_SCALE_RANGE = [
+  "#ffffff", // 0 mm - white (no rain)
+  "#e3f2fd", // 0.5 mm - very light blue
+  "#bbdefb", // 1 mm - light blue
+  "#90caf9", // 2 mm - light-medium blue
+  "#64b5f6", // 5 mm - medium blue
+  "#42a5f5", // 10 mm - medium-dark blue
+  "#2196f3", // 15 mm - blue
+  "#1e88e5", // 20 mm - dark blue
+  "#1565c0", // 30 mm - darker blue
+  "#0d47a1", // 40 mm - very dark blue
+  "#0a1628", // 50 mm - very very dark blue
+];
+
+function defaultRainfallColorScale() {
+  const scale = d3
+    .scaleLinear()
+    .domain(RAINFALL_SCALE_DOMAIN)
+    .range(RAINFALL_SCALE_RANGE)
+    .clamp(true);
+  return (mm) => {
+    if (mm == null || Number.isNaN(mm) || mm < 0) return RAINFALL_SCALE_RANGE[0];
+    return scale(mm);
+  };
+}
+
+/**
+ * Build a year heatmap SVG for rainfall: same format as temperature heatmap.
+ * - One row = one day (Jan 1 top → Dec 31 bottom).
+ * - One column = one hour; noon in centre.
+ * - Each cell colour = rainfall (mm) using a fixed 0–20 mm scale so images are comparable across locations.
+ * @param {Object} data - Open-Meteo archive response with hourly.time and hourly.precipitation
+ * @param {Object} [options] - { locationName, year, cellSize, cellBorderColor, showTooltips }
+ * @returns {string} SVG markup
+ */
+export function buildRainfallYearHeatmapSvg(data, options = {}) {
+  const hourly = data.hourly;
+  if (!hourly?.time?.length) {
+    throw new Error("Rainfall year heatmap requires hourly time");
+  }
+  const precip = hourly.precipitation ?? [];
+
+  const cellSize = options.cellSize ?? CELL_SIZE;
+  const cellBorderColor = options.cellBorderColor ?? "#aaaaaa";
+  const showTooltips = options.showTooltips ?? true;
+  const time = hourly.time;
+  const locationName = options.locationName ?? data.locationName ?? data.timezone ?? "Unknown";
+  const year = options.year ?? new Date().getFullYear();
+
+  const hourToCol = (hour) => Math.min(23, Math.max(0, hour));
+
+  const dateSet = new Set();
+  for (let i = 0; i < time.length; i++) {
+    dateSet.add(time[i].slice(0, 10));
+  }
+  const sortedDates = Array.from(dateSet).sort();
+  const dateToRow = new Map(sortedDates.map((d, i) => [d, i]));
+  const numRows = sortedDates.length;
+  const numCols = 24;
+
+  const grid = Array.from({ length: numRows }, () => Array(numCols).fill(null));
+
+  // Debug: check precipitation data
+  let nonZeroCount = 0;
+  let maxPrecip = 0;
+  let totalPrecip = 0;
+
+  for (let i = 0; i < time.length; i++) {
+    const iso = time[i];
+    const dateStr = iso.slice(0, 10);
+    const hour = parseInt(iso.slice(11, 13), 10);
+    const row = dateToRow.get(dateStr);
+    if (row == null) continue;
+    const col = hourToCol(hour);
+    const p = precip[i];
+    const mm = p != null && !Number.isNaN(p) && p >= 0 ? p : null;
+    grid[row][col] = { mm, date: dateStr, hour };
+    
+    if (mm != null && mm > 0) {
+      nonZeroCount++;
+      maxPrecip = Math.max(maxPrecip, mm);
+      totalPrecip += mm;
+    }
+  }
+
+  // Log precipitation stats for debugging
+  console.log(`[RAINFALL HEATMAP] ${locationName} ${year}: ${nonZeroCount} hours with rain, max: ${maxPrecip.toFixed(2)}mm, total: ${totalPrecip.toFixed(2)}mm`);
+
+  const getColor = defaultRainfallColorScale();
+
+  const width = numCols * cellSize + HEATMAP_MARGIN.left + HEATMAP_MARGIN.right;
+  const height = numRows * cellSize + HEATMAP_MARGIN.top + HEATMAP_MARGIN.bottom;
+
+  const dom = new JSDOM("<!DOCTYPE html><body></body>", { pretendToBeVisual: true });
+  const doc = dom.window.document;
+  const body = d3.select(doc.body);
+
+  const svg = body
+    .append("svg")
+    .attr("xmlns", "http://www.w3.org/2000/svg")
+    .attr("width", width)
+    .attr("height", height)
+    .attr("viewBox", `0 0 ${width} ${height}`);
+
+  svg.append("rect").attr("width", width).attr("height", height).attr("fill", "#1a1a2e");
+
+  const g = svg
+    .append("g")
+    .attr("transform", `translate(${HEATMAP_MARGIN.left},${HEATMAP_MARGIN.top})`);
+
+  g.append("text")
+    .attr("x", (numCols * cellSize) / 2)
+    .attr("y", -22)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#eee")
+    .attr("font-size", "16px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(`Hourly rainfall — ${locationName} — ${year}`);
+
+  g.append("text")
+    .attr("x", (numCols * cellSize) / 2)
+    .attr("y", -6)
+    .attr("text-anchor", "middle")
+    .attr("fill", "#888")
+    .attr("font-size", "11px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text("Midnight ← hours → Noon (centre) → 11pm");
+
+  for (let row = 0; row < numRows; row++) {
+    for (let col = 0; col < numCols; col++) {
+      const cell = grid[row][col];
+      const mm = cell?.mm ?? null;
+      const date = cell?.date ?? sortedDates[row];
+      const hour = cell?.hour ?? col;
+
+      const rect = g
+        .append("rect")
+        .attr("x", col * cellSize)
+        .attr("y", row * cellSize)
+        .attr("width", cellSize)
+        .attr("height", cellSize)
+        .attr("fill", getColor(mm))
+        .attr("stroke", cellBorderColor)
+        .attr("stroke-width", 1);
+
+      if (showTooltips) {
+        const hourLabel = `${hour.toString().padStart(2, "0")}:00`;
+        const dateFormatted = new Date(date + "T00:00:00").toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+        const rainLabel = mm != null ? `${mm.toFixed(1)} mm` : "No data";
+        rect.append("title").text(`${dateFormatted} ${hourLabel} — ${rainLabel}`);
+      }
+    }
+  }
+
+  const legendWidth = numCols * cellSize;
+  const legendHeight = 14;
+  const legendY = numRows * cellSize + 8;
+
+  const legendN = 100;
+  const defs = svg.append("defs");
+  const gradientId = "rainfall-year-heatmap-gradient";
+  const gradient = defs
+    .append("linearGradient")
+    .attr("id", gradientId)
+    .attr("x1", "0%")
+    .attr("x2", "100%")
+    .attr("y1", "0")
+    .attr("y2", "0");
+  const legendMin = RAINFALL_SCALE_DOMAIN[0];
+  const legendMax = RAINFALL_SCALE_DOMAIN[RAINFALL_SCALE_DOMAIN.length - 1];
+  for (let i = 0; i <= legendN; i++) {
+    const v = legendMin + (i / legendN) * (legendMax - legendMin);
+    gradient
+      .append("stop")
+      .attr("offset", `${(i / legendN) * 100}%`)
+      .attr("stop-color", getColor(v));
+  }
+
+  g.append("rect")
+    .attr("x", 0)
+    .attr("y", legendY)
+    .attr("width", legendWidth)
+    .attr("height", legendHeight)
+    .attr("fill", `url(#${gradientId})`)
+    .attr("rx", 2);
+
+  g.append("text")
+    .attr("x", 0)
+    .attr("y", legendY + legendHeight + 12)
+    .attr("fill", "#888")
+    .attr("font-size", "10px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(`${legendMin} mm`);
+
+  g.append("text")
+    .attr("x", legendWidth)
+    .attr("y", legendY + legendHeight + 12)
+    .attr("text-anchor", "end")
+    .attr("fill", "#888")
+    .attr("font-size", "10px")
+    .attr("font-family", "system-ui, sans-serif")
+    .text(`${legendMax} mm`);
 
   return body.select("svg").node().outerHTML;
 }

@@ -1,0 +1,10 @@
+# Copy this to terraform.tfvars and customize
+# terraform.tfvars is gitignored - your actual values won't be committed
+
+resource_group_name     = "weather-images-test-rg"
+location                = "eastus"
+storage_account_name    = "weatherimages1770114490"
+acr_name                = "weatherimages"
+container_app_env_name  = "weather-images-env"
+container_app_name      = "weather-images-api"
+image_name              = "weather-images-api"

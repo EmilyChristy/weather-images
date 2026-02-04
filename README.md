@@ -107,3 +107,32 @@ src/
 
 - [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api) — archive data from 1940 with ~5-day delay
 - [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) — resolve city names to coordinates and timezone
+
+## Docker Deployment
+
+### Build and run locally
+
+```bash
+docker build -t weather-images-api .
+docker run -p 3000:3000 weather-images-api
+```
+# Test
+```bash
+curl http://localhost:3000/health
+```
+
+### Deploy to Azure
+
+See **[azure-deploy.md](./azure-deploy.md)** for detailed instructions on deploying to:
+- Azure Container Apps (recommended)
+- Azure App Service (Container)
+- Azure Container Instances
+
+Quick start with Azure Container Apps:
+
+```bash
+# Build and push to Azure Container Registry
+az acr build --registry <your-acr-name> --image weather-images-api:latest .
+
+# Deploy to Container Apps (see azure-deploy.md for full setup)
+```
