@@ -11,9 +11,12 @@
   "keywords": ["weather", "d3", "api", "images"],
   "license": "MIT",
   "dependencies": {
+    "@azure/identity": "^4.2.1",
+    "@azure/storage-blob": "^12.22.0",
     "d3": "^7.9.0",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",
+    "geo-tz": "^7.0.2",
     "jsdom": "^25.0.1",
     "sharp": "^0.33.5"
   }

@@ -1,11 +1,23 @@
 /**
  * Fetches historical weather from Open-Meteo Historical Weather API.
  * No API key required for non-commercial use.
+ * Timezone is always set to the location's IANA timezone so hourly data is in local time.
  * @see https://open-meteo.com/en/docs/historical-weather-api
  */
 
+import { find as findTimezone } from "geo-tz";
+
 const ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive";
 const GEOCODE_URL = "https://geocoding-api.open-meteo.com/v1/search";
+
+/**
+ * Resolve IANA timezone for coordinates (e.g. "Europe/London").
+ * Used so Open-Meteo returns hourly data in local time for that location.
+ */
+export function getTimezoneForCoords(lat, lon) {
+  const zones = findTimezone(Number(lat), Number(lon));
+  return zones?.[0] ?? "UTC";
+}
 
 /**
  * Resolve city name to first result's { latitude, longitude, timezone, name }.
@@ -73,9 +85,11 @@ export async function getWeatherByCity(city, startDate, endDate) {
 
 /**
  * Get historical weather by coordinates.
+ * Timezone is resolved from lat/lon so hourly data is in local time for that location.
  */
-export async function getWeatherByCoords(lat, lon, startDate, endDate, timezone = "auto") {
-  const data = await getHistoricalWeather(lat, lon, startDate, endDate, timezone);
+export async function getWeatherByCoords(lat, lon, startDate, endDate, timezone = null) {
+  const tz = timezone ?? getTimezoneForCoords(lat, lon);
+  const data = await getHistoricalWeather(lat, lon, startDate, endDate, tz);
   return data;
 }
 

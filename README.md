@@ -4,11 +4,11 @@ A Node.js API that uses **D3.js** to generate weather visualization images from 
 
 ## Features
 
-- **Express** API with a single image endpoint
+- **Express** API with two image endpoints: bar chart and **year heatmap**
 - **Open-Meteo Historical Weather API** — no API key required for non-commercial use
-- **D3.js** + **jsdom** for server-side SVG: daily bar chart (max/min temp, mean humidity) over a date range
+- **D3.js** + **jsdom** for server-side SVG: daily bar chart (max/min temp, mean humidity) and a **year heatmap** (one row per day Jan–Dec, 24 squares per row with noon centred, colour = temperature)
 - **Sharp** to convert SVG to PNG
-- Location by **city name** (geocoded via Open-Meteo) or **lat/lon**; optional **start_date** and **end_date**
+- Location by **city name** (geocoded via Open-Meteo) or **lat/lon**; optional dates / year
 
 ## Setup
 
@@ -63,6 +63,32 @@ Returns a historical weather chart as an image. Data comes from [Open-Meteo Hist
 - Success: `image/png` or `image/svg+xml` (body is the image)
 - Error: JSON with `error` message and status code
 
+### `GET /api/weather-year-image`
+
+Returns a **year heatmap** image: one row per day (January at top → December at bottom), 24 columns (one per hour) with **noon in the centre** of each row. Each cell is coloured by temperature (default blue = cold → red = hot; a custom colour scale can be wired in later).
+
+| Query    | Required | Description                                                                 |
+|----------|----------|-----------------------------------------------------------------------------|
+| `city`   | One of   | City name.                                                                 |
+| `lat`    | One of   | Latitude (use with `lon`).                                                  |
+| `lon`    | One of   | Longitude (use with `lat`).                                                 |
+| `year`   | No       | Year (e.g. `2024`). Default: previous year (data has ~5-day delay).         |
+| `format` | No       | `png` (default) or `svg`.                                                   |
+
+**Examples**
+
+- By city, previous year:  
+  `GET http://localhost:3000/api/weather-year-image?city=London`
+- By coordinates, specific year:  
+  `GET http://localhost:3000/api/weather-year-image?lat=52.52&lon=13.41&year=2024`
+- SVG:  
+  `GET http://localhost:3000/api/weather-year-image?city=Berlin&year=2024&format=svg`
+
+**Response**
+
+- Success: `image/png` or `image/svg+xml`
+- Error: JSON with `error` and status code
+
 ### `GET /health`
 
 Returns `{ "ok": true }` for health checks.
@@ -71,13 +97,42 @@ Returns `{ "ok": true }` for health checks.
 
 ```
 src/
-  index.js           # Express app and /api/weather-image route
+  index.js           # Express app: /api/weather-image, /api/weather-year-image
   services/
     weather.js       # Open-Meteo Geocoding + Historical Weather (archive) fetch
-    chart.js         # D3 daily bar chart from hourly data → SVG
+    chart.js         # D3: daily bar chart + year heatmap (noon-centred hours) → SVG
 ```
 
 ## Data source
 
 - [Open-Meteo Historical Weather API](https://open-meteo.com/en/docs/historical-weather-api) — archive data from 1940 with ~5-day delay
 - [Open-Meteo Geocoding API](https://open-meteo.com/en/docs/geocoding-api) — resolve city names to coordinates and timezone
+
+## Docker Deployment
+
+### Build and run locally
+
+```bash
+docker build -t weather-images-api .
+docker run -p 3000:3000 weather-images-api
+```
+# Test
+```bash
+curl http://localhost:3000/health
+```
+
+### Deploy to Azure
+
+See **[azure-deploy.md](./azure-deploy.md)** for detailed instructions on deploying to:
+- Azure Container Apps (recommended)
+- Azure App Service (Container)
+- Azure Container Instances
+
+Quick start with Azure Container Apps:
+
+```bash
+# Build and push to Azure Container Registry
+az acr build --registry <your-acr-name> --image weather-images-api:latest .
+
+# Deploy to Container Apps (see azure-deploy.md for full setup)
+```
